@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-deployment
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: my-app
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      affinity:
+        ###
+        # данное условие affinity позволяет разместить поды только на нодах с метками e2e-az1 или e2e-az2 или e2e-az3
+        # тем самым поды нашего деплоймента будут находиться в разных зонах, что позволит сделать максимальную отказоустойчивость нашего приложения
+        ###
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/e2e-az-name
+                operator: In
+                values:
+                - e2e-az1
+                - e2e-az2
+                - e2e-az3
+        ###
+        # данное условие affinity означает, чтобы поды scheduler старался разместить поды на тех нодах, где нет подов с меткой: app: my-app
+        ###
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 10
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - my-app
+          topologyKey: topology.kubernetes.io/zone
+      containers:
+      - name: my-app
+        image: my-app:1.0.0
+        ###
+        # 
+        ###
+        resources:
+          ###
+          # поскольку приложение после первых запросов начинает использовать 0.1 CPU, то я считаю, что это минимальное кол-во для работы приоложения
+          ###
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          ###
+          # поскольку приложению на первые запросы нужно больше чем 0.1 CPU, то в лимитах указывается максмимально возможное потребления ресурсов CPU контейнером
+          # решил взять с запасом, потому что из ТЗ не известно сколько приложение потребляет максимально.
+          ###
+          limits:
+            ###
+            # поскольку сказано, что память ровно потребляет 128 Мб, то для экономии ресурсов request и лимты по памяти нужно сделать одинаковыми
+            ###
+            memory: "128Mi"
+            cpu: "1"
+        ###
+        # для примера представим, что у нас есть приложение, у которого есть endpoint для проверки readiness и liveness probe
+        ###
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          ###
+          # поскольку запуск приложения занимает от 5 до 10 секунд, то логично чтобы liveness probe запускались после 10 секунд.
+          # если сделать, чтобы они запускались через 5 секунд, нет уверенности что приложение запуститься через 5 секунд, поэтому чтобы перестраховаться я выбираю 10 секунд
+          ###
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          ###
+          # логика такая же, как и для liveness probe
+          ###
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        ports:
+          - containerPort: 8080
